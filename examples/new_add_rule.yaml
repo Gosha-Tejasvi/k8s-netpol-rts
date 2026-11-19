@@ -1,0 +1,116 @@
+apiVersion: v1
+kind: List
+items:
+- {apiVersion: v1, kind: Namespace, metadata: {name: shop, labels: {env: prod}}}
+- apiVersion: v1
+  kind: Pod
+  metadata: {name: frontend-0, namespace: shop, labels: {app: shop, tier: frontend}}
+  status: {podIP: 10.244.0.1}
+  spec:
+    containers:
+    - name: c
+      image: registry.k8s.io/e2e-test-images/agnhost:2.47
+      args: [netexec, --http-port=80]
+      ports: [{name: http, containerPort: 80}]
+- apiVersion: v1
+  kind: Pod
+  metadata: {name: frontend-1, namespace: shop, labels: {app: shop, tier: frontend}}
+  status: {podIP: 10.244.0.2}
+  spec:
+    containers:
+    - name: c
+      image: registry.k8s.io/e2e-test-images/agnhost:2.47
+      args: [netexec, --http-port=80]
+      ports: [{name: http, containerPort: 80}]
+- apiVersion: v1
+  kind: Pod
+  metadata: {name: frontend-2, namespace: shop, labels: {app: shop, tier: frontend}}
+  status: {podIP: 10.244.0.3}
+  spec:
+    containers:
+    - name: c
+      image: registry.k8s.io/e2e-test-images/agnhost:2.47
+      args: [netexec, --http-port=80]
+      ports: [{name: http, containerPort: 80}]
+- apiVersion: v1
+  kind: Pod
+  metadata: {name: backend-0, namespace: shop, labels: {app: shop, tier: backend}}
+  status: {podIP: 10.244.0.4}
+  spec:
+    containers:
+    - name: c
+      image: registry.k8s.io/e2e-test-images/agnhost:2.47
+      args: [netexec, --http-port=8080]
+      ports: [{name: http, containerPort: 8080}]
+- apiVersion: v1
+  kind: Pod
+  metadata: {name: backend-1, namespace: shop, labels: {app: shop, tier: backend}}
+  status: {podIP: 10.244.0.5}
+  spec:
+    containers:
+    - name: c
+      image: registry.k8s.io/e2e-test-images/agnhost:2.47
+      args: [netexec, --http-port=8080]
+      ports: [{name: http, containerPort: 8080}]
+- apiVersion: v1
+  kind: Pod
+  metadata: {name: backend-2, namespace: shop, labels: {app: shop, tier: backend}}
+  status: {podIP: 10.244.0.6}
+  spec:
+    containers:
+    - name: c
+      image: registry.k8s.io/e2e-test-images/agnhost:2.47
+      args: [netexec, --http-port=8080]
+      ports: [{name: http, containerPort: 8080}]
+- apiVersion: v1
+  kind: Pod
+  metadata: {name: db-0, namespace: shop, labels: {app: shop, tier: db}}
+  status: {podIP: 10.244.0.7}
+  spec:
+    containers:
+    - name: c
+      image: registry.k8s.io/e2e-test-images/agnhost:2.47
+      args: [netexec, --http-port=5432]
+      ports: [{name: pg, containerPort: 5432}]
+- apiVersion: v1
+  kind: Pod
+  metadata: {name: db-1, namespace: shop, labels: {app: shop, tier: db}}
+  status: {podIP: 10.244.0.8}
+  spec:
+    containers:
+    - name: c
+      image: registry.k8s.io/e2e-test-images/agnhost:2.47
+      args: [netexec, --http-port=5432]
+      ports: [{name: pg, containerPort: 5432}]
+- apiVersion: v1
+  kind: Pod
+  metadata: {name: db-2, namespace: shop, labels: {app: shop, tier: db}}
+  status: {podIP: 10.244.0.9}
+  spec:
+    containers:
+    - name: c
+      image: registry.k8s.io/e2e-test-images/agnhost:2.47
+      args: [netexec, --http-port=5432]
+      ports: [{name: pg, containerPort: 5432}]
+- apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata: {name: default-deny, namespace: shop}
+  spec: {podSelector: {}, policyTypes: [Ingress]}
+- apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata: {name: db-in, namespace: shop}
+  spec:
+    podSelector: {matchLabels: {tier: db}}
+    ingress:
+    - from: [{podSelector: {matchLabels: {tier: backend}}}]
+      ports: [{protocol: TCP, port: 5432}]
+- apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata: {name: backend-in, namespace: shop}
+  spec:
+    podSelector: {matchLabels: {tier: backend}}
+    ingress:
+    - from: [{podSelector: {matchLabels: {tier: frontend}}}]
+      ports: [{protocol: TCP, port: 8080}]
+    - from: [{podSelector: {matchLabels: {tier: db}}}]
+      ports: [{protocol: TCP, port: 8080}]
