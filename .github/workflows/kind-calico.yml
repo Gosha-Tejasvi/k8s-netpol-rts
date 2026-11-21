@@ -1,28 +1,174 @@
+
 name: kind-calico-smoke
+
 on: workflow_dispatch
+
 jobs:
   smoke:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install pyyaml pytest
-      - run: python -m pytest -q
-      - run: python -m netpolrts.experiments --seeds 15
+
+      - name: Install Python dependencies
+        run: pip install pyyaml pytest
+
+      - name: Create results directory
+        run: mkdir -p results
+
+      - name: Run unit tests
+        run: python -m pytest -q
+
+      - name: Run simulation experiments
+        run: python -m netpolrts.experiments --seeds 15
+
       - uses: helm/kind-action@v1
         with:
           config: live/kind-config.yaml
           cluster_name: netpol
           wait: 0s
+
       - name: Install Calico
         run: |
           kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/calico.yaml
           kubectl -n kube-system rollout status ds/calico-node --timeout=300s
           kubectl wait --for=condition=Ready nodes --all --timeout=300s
-      - run: kubectl get nodes -o wide && kubectl get pods -A
-      - uses: actions/upload-artifact@v4
+
+      - name: Inspect cluster
+        run: |
+          kubectl get nodes -o wide
+          kubectl get pods -A
+
+      - name: Test real NetworkPolicy enforcement
+        run: |
+          set -e
+
+          echo "=== LIVE CALICO NETWORKPOLICY TEST ===" | tee results/live-calico.txt
+
+          kubectl create namespace netpol-test
+
+          kubectl run server \
+            -n netpol-test \
+            --image=nginx:1.27 \
+            --labels=app=server \
+            --port=80
+
+          kubectl expose pod server -n netpol-test --port=80
+
+          kubectl run client \
+            -n netpol-test \
+            --image=busybox:1.36 \
+            --labels=app=client \
+            --restart=Never \
+            --command -- sh -c "sleep 3600"
+
+          kubectl wait -n netpol-test \
+            --for=condition=Ready pod/server pod/client \
+            --timeout=180s
+
+          echo "TEST 1: Initial connection should succeed"
+
+          connected=false
+          for i in $(seq 1 30); do
+            if kubectl exec -n netpol-test client -- \
+              wget -q -T 3 -O /dev/null http://server; then
+              connected=true
+              break
+            fi
+            sleep 2
+          done
+
+          if [ "$connected" != "true" ]; then
+            echo "FAIL: Initial connection failed"
+            exit 1
+          fi
+
+          echo "PASS: Initial connection allowed" | tee -a results/live-calico.txt
+
+          cat <<'EOF' | kubectl apply -f -
+          apiVersion: networking.k8s.io/v1
+          kind: NetworkPolicy
+          metadata:
+            name: deny-server-ingress
+            namespace: netpol-test
+          spec:
+            podSelector:
+              matchLabels:
+                app: server
+            policyTypes:
+            - Ingress
+          EOF
+
+          sleep 5
+
+          echo "TEST 2: Default deny should block connection"
+
+          if kubectl exec -n netpol-test client -- \
+            wget -q -T 3 -O /dev/null http://server; then
+            echo "FAIL: Traffic was not blocked"
+            exit 1
+          fi
+
+          echo "PASS: Traffic blocked" | tee -a results/live-calico.txt
+
+          cat <<'EOF' | kubectl apply -f -
+          apiVersion: networking.k8s.io/v1
+          kind: NetworkPolicy
+          metadata:
+            name: allow-client
+            namespace: netpol-test
+          spec:
+            podSelector:
+              matchLabels:
+                app: server
+            policyTypes:
+            - Ingress
+            ingress:
+            - from:
+              - podSelector:
+                  matchLabels:
+                    app: client
+              ports:
+              - protocol: TCP
+                port: 80
+          EOF
+
+          echo "TEST 3: Explicit allow should restore connection"
+
+          connected=false
+          for i in $(seq 1 30); do
+            if kubectl exec -n netpol-test client -- \
+              wget -q -T 3 -O /dev/null http://server; then
+              connected=true
+              break
+            fi
+            sleep 2
+          done
+
+          if [ "$connected" != "true" ]; then
+            echo "FAIL: Allowed connection was not restored"
+            exit 1
+          fi
+
+          echo "PASS: Allowed connection restored" | tee -a results/live-calico.txt
+
+          echo "=== ALL LIVE TESTS PASSED ===" | tee -a results/live-calico.txt
+
+      - name: Capture cluster diagnostics
+        if: always()
+        run: |
+          kubectl get nodes -o wide > results/nodes.txt 2>&1 || true
+          kubectl get pods -A -o wide > results/pods.txt 2>&1 || true
+          kubectl get networkpolicies -A -o yaml > results/networkpolicies.yaml 2>&1 || true
+
+      - name: Upload experiment and live test results
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: results
+          name: netpolrts-results
           path: results/
+          if-no-files-found: warn
