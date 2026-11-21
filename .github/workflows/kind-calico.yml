@@ -1,0 +1,28 @@
+name: kind-calico-smoke
+on: workflow_dispatch
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml pytest
+      - run: python -m pytest -q
+      - run: python -m netpolrts.experiments --seeds 15
+      - uses: helm/kind-action@v1
+        with:
+          config: live/kind-config.yaml
+          cluster_name: netpol
+          wait: 0s
+      - name: Install Calico
+        run: |
+          kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/calico.yaml
+          kubectl -n kube-system rollout status ds/calico-node --timeout=300s
+          kubectl wait --for=condition=Ready nodes --all --timeout=300s
+      - run: kubectl get nodes -o wide && kubectl get pods -A
+      - uses: actions/upload-artifact@v4
+        with:
+          name: results
+          path: results/
